@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feat/quotes-scrapper]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scraper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, scrape, and validate
+        run: make ci

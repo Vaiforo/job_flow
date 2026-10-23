@@ -1,0 +1,17 @@
+{
+  "name": "job-flow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser-based scraper worker prototype for a job aggregator",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "verify": "node src/verify.js"
+  },
+  "dependencies": {
+    "playwright": "1.64.0"
+  }
+}
