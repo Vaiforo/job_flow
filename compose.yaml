@@ -1,0 +1,70 @@
+name: ${COMPOSE_PROJECT_NAME:-job-flow}
+
+x-aws-environment: &aws-environment
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_REGION: ${AWS_REGION:-us-east-1}
+  AWS_ENDPOINT_URL: http://floci:4566
+  NO_PROXY: floci,localhost,127.0.0.1
+  no_proxy: floci,localhost,127.0.0.1
+
+services:
+  floci:
+    image: floci/floci:2.2.0
+    ports:
+      - "127.0.0.1:${FLOCI_PORT:-4566}:4566"
+    environment:
+      FLOCI_BASE_URL: http://floci:4566
+      FLOCI_HOSTNAME: floci
+      FLOCI_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      FLOCI_STORAGE_MODE: persistent
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+    volumes:
+      - floci-data:/app/data
+    healthcheck:
+      test: [CMD, /usr/local/bin/healthcheck.sh]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  terraform:
+    image: hashicorp/terraform:1.14.0
+    profiles: [tools]
+    working_dir: /infra
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      <<: *aws-environment
+      HOME: /tmp
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_region: ${AWS_REGION:-us-east-1}
+      TF_VAR_endpoint_url: http://floci:4566
+    volumes:
+      - ${TF_ROOT:-./infra}:/infra
+
+  worker:
+    image: ${IMAGE:-job-flow:latest}
+    profiles: [app]
+    command: [node, src/worker.js]
+    init: true
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    shm_size: 1gb
+    stop_grace_period: 150s
+    environment:
+      <<: *aws-environment
+      HOME: /tmp
+    env_file:
+      - path: ${RUNTIME_ENV_FILE:-./out/runtime.env}
+        required: false
+    volumes:
+      - ./out:/app/out
+    depends_on:
+      floci:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "require('node:fs').accessSync('/tmp/job-flow-worker-ready')"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  floci-data:
