@@ -12,7 +12,7 @@ RUN_FLAGS := --rm --init --shm-size=1g --user "$(HOST_USER)" --env HOME=/tmp
 .PHONY: build run clean ci
 
 build:
-	docker build --progress=plain --target runtime --tag "$(IMAGE)" .
+	docker build --progress=plain --tag "$(IMAGE)" .
 
 run:
 	mkdir -p "$(OUT_DIR)"
