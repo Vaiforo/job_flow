@@ -34,6 +34,17 @@ For configuration checks, install Docker CLI with the Compose plugin. The
 `docker compose config` check does not need a running local Docker daemon.
 Docker Engine for the application is installed on the VM by Ansible.
 
+On Windows, open an Ubuntu WSL2 terminal and clone the project into its Linux
+filesystem, for example `~/projects/job_flow`. Run Linux Make, Bash and Python
+there. Windows Make, PowerShell and Git Bash are not supported control nodes.
+Multipass stays installed on Windows; the script calls `multipass.exe` from WSL.
+The repository enforces LF line endings through `.gitattributes`.
+
+If a previous Windows checkout reports `CreateProcess ... id -u` or an invalid
+`pipefail` option, use a fresh clone inside WSL rather than running that checkout
+with Windows tools. Do not copy a Windows `.venv` into WSL; `make setup` creates
+the Linux environment.
+
 Initial setup needs access to PyPI, official Ansible collection GitHub repositories,
 Ubuntu images and packages, download.docker.com, Docker Hub, npm and Playwright's
 browser download servers. The worker needs access to the source website.
