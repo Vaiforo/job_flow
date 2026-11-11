@@ -2,3 +2,10 @@ out/
 node_modules/
 .env
 *.log
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.tfstate.lock.info
+*.tfvars
+*.tfvars.json

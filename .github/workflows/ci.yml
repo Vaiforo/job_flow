@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/quotes-scrapper]
+    branches: [main, feat/quotes-scrapper, feat/terraform-infra]
   pull_request:
     branches: [main]
 
@@ -10,10 +10,10 @@ permissions:
   contents: read
 
 jobs:
-  scraper:
+  terraform:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Build, scrape, and validate
+      - name: Check Terraform formatting, validate, and plan
         run: make ci
