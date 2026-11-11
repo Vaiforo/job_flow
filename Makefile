@@ -14,12 +14,12 @@ RUN_FLAGS := --rm --init --shm-size=1g --user "$(HOST_USER)" --env HOME=/tmp
 build:
 	docker build --progress=plain --tag "$(IMAGE)" .
 
-provision deploy run verify plan fmt lock destroy ci:
-	bash scripts/infra.sh $@
+cloud-provision cloud-deploy cloud-run cloud-verify cloud-plan cloud-fmt cloud-lock cloud-destroy cloud-ci:
+	bash scripts/infra.sh $(patsubst cloud-%,%,$@)
 
-deploy: build
+cloud-deploy: build
 
-logs:
+cloud-logs:
 	docker compose logs --tail=100 worker
 
 run-local:
@@ -46,3 +46,26 @@ ci-local:
 	  $(MAKE) build; \
 	  $(MAKE) run-local; \
 	  $(MAKE) verify-local
+
+.PHONY: setup provision deploy run verify fault-test destroy ci
+export URL ?= https://quotes.toscrape.com/scroll
+setup:
+	bash scripts/setup.sh
+
+provision: setup
+	.venv/bin/python scripts/server.py provision
+
+deploy run verify fault-test:
+	.venv/bin/python scripts/server.py $@
+
+destroy:
+	python3 scripts/server.py destroy
+
+ci: setup
+	bash scripts/server-ci.sh
+
+.PHONY: cloud-provision cloud-deploy cloud-run cloud-verify cloud-plan cloud-fmt cloud-lock cloud-destroy cloud-ci cloud-logs
+plan: cloud-plan
+fmt: cloud-fmt
+lock: cloud-lock
+logs: cloud-logs
