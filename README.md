@@ -1,159 +1,142 @@
 # Job Flow
 
-Job Flow — прототип системы сбора данных для будущего агрегатора вакансий.
-Задания поступают в SQS, браузерный worker собирает данные и сохраняет JSON в S3.
-Учебный источник пока один: [Quotes to Scrape](https://quotes.toscrape.com/scroll).
-Worker использует Playwright и Chromium, дожидается подгрузки цитат и прокручивает
-страницу до конца. Сбор вакансий ещё не реализован.
+Job Flow collects source data for a future job aggregator. The current source is
+[Quotes to Scrape](https://quotes.toscrape.com/scroll). The browser worker collects
+quotes with their text, author and tags. Job-site integrations are not implemented yet.
+
+## Server architecture
 
 ```text
-make run → SQS → Scraper Worker → Quotes to Scrape
-                      ↓
-                  S3: raw/quotes/<taskId>.json
+Make -> Multipass -> Ubuntu 24.04 -> Ansible -> Docker Compose
+                                               Redis Streams -> scraper
+                                                                  |
+                                                               results -> Nginx
 ```
 
-S3 и SQS работают внутри локального AWS-эмулятора Floci `2.2.0`.
-Terraform управляет bucket и queue, Docker Compose — контейнерами и сетью.
-У каждой цитаты в JSON есть `text`, `author` и массив `tags`.
+One VM has 2 CPUs, 4 GB RAM and a 20 GB disk. Redis stores tasks in stream `jobs`,
+consumer group `scrapers`. The worker saves JSON in
+`/srv/quotes-scraper/results/<job_id>.json`. Nginx serves it at
+`http://<VM_IP>/results/<job_id>.json`.
 
-## Подготовка и разработка
+Only Nginx publishes a container port (80). Redis has no published port and keeps
+its data in a Docker volume with AOF enabled. Nginx mounts results read-only.
+SSH on the VM is used by Ansible for administration.
 
-Нужны Git, Docker с BuildKit, Docker Compose **2.24.0+**, GNU Make и Bash.
-Docker должен быть запущен. Порт `127.0.0.1:4566` должен быть свободен.
-Node.js, Chromium и Terraform запускаются в контейнерах; отдельно устанавливать
-их не нужно. Реальный AWS-аккаунт и настоящие ключи не требуются: Compose задаёт
-тестовые учётные данные `test` только для локального эмулятора.
+## Host requirements
 
-Клонируйте репозиторий и откройте его каталог. Все команды ниже выполняются
-из корня проекта. Если Docker требует прав администратора, используйте
-`sudo make` вместо `make`.
+Use Linux, macOS, or WSL2 on Windows. Install Git, GNU Make, Python 3.12 with venv,
+OpenSSH tools and Multipass with a working virtualization backend. Have enough
+free memory and disk space for the VM. On Windows, install Multipass on Windows
+and allow WSL to run `multipass.exe`. The VM's SSH and HTTP addresses must be
+reachable from the control node. No CPU architecture is fixed in the configuration.
 
-Для первой подготовки нужны подключения к Docker Hub, Terraform Registry,
-серверам загрузки провайдера, npm, Debian и CDN браузеров Playwright.
-При scraping нужен доступ к учебному сайту. Первая сборка занимает больше времени;
-следующие используют кеш зависимостей и браузера.
+For configuration checks, install Docker CLI with the Compose plugin. The
+`docker compose config` check does not need a running local Docker daemon.
+Docker Engine for the application is installed on the VM by Ansible.
 
-## Создание инфраструктуры и запуск
+Initial setup needs access to PyPI, official Ansible collection GitHub repositories,
+Ubuntu images and packages, download.docker.com, Docker Hub, npm and Playwright's
+browser download servers. The worker needs access to the source website.
+
+## Start the server
+
+Run commands from the repository root:
 
 ```sh
+make setup
 make provision
 make deploy
-make run
+make run URL=https://quotes.toscrape.com/scroll
+make verify
 ```
 
-`make provision` запускает Floci, ждёт его готовности, выполняет Terraform init,
-validate и apply. Создаются bucket `job-flow-raw-results` и очередь
-`job-flow-scrape-tasks`. Повторный вызов с прежней конфигурацией показывает
-`0 added, 0 changed, 0 destroyed`. Просмотреть текущий план можно через `make plan`.
+- `setup` creates `.venv`, installs pinned Python tools and both collections from
+  `infra/ansible/requirements.yml`. Collection dependencies are explicitly listed.
+- `provision` also runs setup, creates the VM if missing, waits for cloud-init,
+  generates inventory and configures the server. The first run deploys the app too.
+- `deploy` updates only the app on an existing server. It builds the image when
+  build inputs change and applies Compose configuration through Ansible.
+- `run` submits exactly one task with a new `job_id` and the given `url`. It saves
+  task details in `.lab/last-job.json`. Each invocation submits a new job.
+- `verify` waits with bounded retries for that job's valid JSON, no temporary file
+  and an empty pending list. It checks HTTP from the control node and compares the
+  response checksum with the saved file. It submits no additional task.
 
-`make deploy` собирает образ `job-flow:latest` и запускает worker в фоне.
-Имена ресурсов берутся из Terraform outputs и сохраняются в `out/runtime.env`,
-откуда Compose передаёт их через окружение. После изменения `src/` повторите
-`make deploy`. Без предварительного provision запуск завершится ошибкой.
+Repeat `make provision` and `make deploy` without editing inputs: Ansible should
+report `changed=0`, `failed=0`, `unreachable=0`.
 
-`make run` отправляет **одно** сообщение с новым `taskId` и `source: "quotes"`,
-ждёт объект `raw/quotes/<taskId>.json` в S3, проверяет непустой JSON и формат цитат,
-затем ждёт нулевых счётчиков доступных, обрабатываемых и отложенных сообщений.
-При работе с одной задачей это подтверждает завершение полного цикла.
-Проверка ограничена четырьмя минутами; ошибка не отправляет второе сообщение.
-Для повторной проверки последней задачи используйте `make verify`.
+Cloud-init prepares only the temporary `ubuntu` account, SSH key, sudo and Python.
+Ansible creates `admin` and tests a fresh key-based SSH connection and sudo before
+closing temporary access. Root login, password and keyboard-interactive login are
+disabled. SSH configuration is validated before reload. Host key checking stays
+on: the initial host key is obtained through the local Multipass management channel
+and saved in `.lab/known_hosts`. Admin is not in the Docker group; Ansible uses sudo.
+After hardening, use the admin connection rather than Multipass guest execution.
 
-Основной результат хранится в S3. `out/last-task.json` содержит сведения о последнем
-задании, а `out/result.json` — скачанную копию результата для просмотра.
-`make logs` показывает лог worker, включая успешную запись S3 и удаление сообщения.
-При запуске через `sudo make` файлы результата принадлежат исходному пользователю.
+## Job recovery
 
-Образ собирается от `node:22-bookworm` в две стадии: `dependencies` устанавливает
-npm-зависимости, а `browser` содержит браузерную среду и приложение.
-Системные библиотеки и Chromium устанавливаются отдельными шагами,
-исходники копируются последними.
+The worker receives one job at a time with `XREADGROUP`. Unacknowledged messages
+remain in Redis's pending entries list. `XAUTOCLAIM` reassigns messages idle for
+150 seconds after a crash. New messages and pending messages are both handled.
+The browser task has a 120-second timer. Ordinary shutdown allows a current task
+to finish; Docker grants 130 seconds before forcing termination.
 
-## Обработка заданий и подключение
+Results are validated, written to `.<job_id>.tmp` in the results directory and
+renamed atomically to `<job_id>.json`. `XACK` runs last. A repeated job ID reuses an
+existing valid result without changing it. Invalid existing results produce an
+error and remain pending rather than being silently acknowledged.
 
-Worker обрабатывает по одному сообщению с long polling до 20 секунд.
-Он проверяет задание, запускает прежний скрапер, валидирует цитаты, выполняет
-`PutObject` и только после его успешного завершения вызывает `DeleteMessage`
-с `ReceiptHandle`. При ошибке сообщение остаётся в очереди и снова становится
-доступным после visibility timeout (180 секунд). Обработка ограничена 120 секундами,
-а при остановке контейнеру даётся 150 секунд для завершения текущей задачи.
+```sh
+make fault-test
+```
 
-Повторная доставка возможна, например при падении между записью S3 и удалением SQS.
-Стабильный ключ по `taskId` позволяет перезаписать объект при повторной попытке.
-Гарантии однократной обработки нет. Некорректные задания не удаляются автоматически;
-DLQ и параллельная обработка пока не добавлены.
+This creates a job, pauses the worker after rename and before acknowledgment,
+kills it with SIGKILL and checks that the message remains pending. After restart,
+the worker claims and acknowledges it. The same job ID is then delivered again.
+The result checksum and inode must be unchanged. Pause files live in a separate
+control directory that Nginx cannot access. The scenario removes its control flags
+even when a check fails. Allow several minutes for the pending recovery interval.
 
-| Переменная | Назначение |
-| --- | --- |
-| `AWS_ENDPOINT_URL` | `http://floci:4566` внутри Compose-сети |
-| `AWS_REGION` | Общий регион приложения и Terraform, по умолчанию `us-east-1` |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Тестовые учётные данные Floci |
-| `S3_BUCKET` | Имя bucket из Terraform output |
-| `SQS_QUEUE_URL` | URL очереди из Terraform output |
+XACK removes a pending entry, not the stream record. An empty XPENDING therefore
+does not imply an empty stream. AOF uses `appendfsync everysec`; this setup tests
+worker crashes and does not promise zero data loss after a host power failure.
 
-Endpoint задаётся окружением, потому что `localhost` внутри worker указывает на
-сам worker. `FLOCI_BASE_URL` и `FLOCI_HOSTNAME` заставляют Floci возвращать URL
-с именем `floci`, доступным другим контейнерам. Для S3 включён path-style,
-поэтому отдельный DNS для каждого bucket не нужен.
-
-Ресурсы S3 и SQS независимы друг от друга; worker требует оба.
-Makefile задаёт порядок provision → deploy, Terraform outputs передают созданные
-ресурсы, а worker перед началом работы проверяет доступность bucket и queue.
-Одного Compose `depends_on` для проверки ресурсов Terraform недостаточно.
-
-## CI и форматирование
+## Checks and removal
 
 ```sh
 make ci
-```
-
-GitHub Actions вызывает `make ci`: Terraform fmt -check, init с зафиксированным
-lock-файлом, validate и plan. CI использует отдельный Compose-проект, случайный
-локальный порт и копию конфигурации с отдельным state в `out/ci.*`.
-Окружение CI удаляется и при ошибке. Рабочая инфраструктура не затрагивается.
-Apply и scraping в этой проверке не выполняются. На чистом окружении план должен
-предлагать создание двух ресурсов; это нормальный результат, а не ошибка.
-
-`make fmt` форматирует Terraform. `make lock` — явное обновление провайдера в рамках
-ограничения версии и его lock-файла с хешами для Linux AMD64 и ARM64.
-Обычные provision и CI используют `-lockfile=readonly`.
-
-## Состояние и удаление окружения
-
-Terraform с локальным backend хранит состояние в `infra/terraform.tfstate`.
-Оно связывает описанные ресурсы с реальными объектами Floci. `plan` сравнивает
-конфигурацию с текущими ресурсами, а `apply` выполняет предложенные изменения.
-После изменения управляемого атрибута в обход Terraform следующий plan может
-показать расхождение, а apply вернёт описанную конфигурацию.
-
-Сам Floci сохраняет данные в отдельном Docker volume `floci-data` в режиме
-`persistent`. State Terraform и содержимое Floci должны сохраняться вместе:
-потеря state не удаляет ресурсы, а потеря volume уничтожает данные эмулятора.
-
-```sh
 make destroy
 make destroy
 ```
 
-Destroy останавливает worker, удаляет bucket и queue через Terraform, затем
-останавливает Compose-окружение и удаляет volume Floci. У bucket задан
-`force_destroy = true`: **его результаты тоже удаляются**. Повторный вызов успешен.
-При ошибке Terraform окружение и state сохраняются для повторной попытки.
+`ci` installs collections, checks YAML, runs ansible-lint and syntax checks with
+`hosts.example.yml`, and validates Compose. It creates no VM. SSH changes,
+idempotence and the crash scenario must also be checked on a host with Multipass.
 
-Для очистки локальных файлов и образа приложения:
+`destroy` deletes only the `job-flow` VM and `.lab/`, including its local keys,
+inventory and logs. All VM results and Redis data are lost. Repeated removal is
+successful. Run `make provision` to create a new server afterwards.
+
+Do not commit `.lab/`, `.venv/`, private keys, generated inventory, results or state.
+Tracked files contain configuration and public examples only.
+
+## Other execution modes
+
+The existing Floci SQS/S3 mode remains available:
 
 ```sh
-make clean
+make cloud-provision
+make cloud-deploy
+make cloud-run
+make cloud-verify
+make cloud-ci
+make cloud-destroy
 ```
 
-`make clean` останавливает и удаляет worker, удаляет образ приложения и `out/`.
-Floci, bucket, queue, Terraform state и кеш сборки сохраняются. Для восстановления
-worker после clean достаточно `make deploy` — runtime.env снова берётся из outputs.
+Terraform state stays in `infra/terraform.tfstate` and is excluded from Git.
+`infra/.terraform.lock.hcl` is tracked. Local Floci uses port 4566.
 
-В Git хранятся `.tf` и `infra/.terraform.lock.hcl`. Каталоги `.terraform/`,
-файлы `*.tfstate*`, планы, `.env`, пользовательские `.tfvars` и `out/` исключены.
-Настоящие секреты нельзя добавлять ни в Terraform-конфигурацию, ни в репозиторий.
-
-## Локальный режим первой лабораторной
+To collect directly into `out/result.json` without a queue:
 
 ```sh
 make build
@@ -161,35 +144,5 @@ make run-local
 make verify-local
 ```
 
-Прежний скрапер сохраняет цитаты прямо в `out/result.json` без SQS и S3.
-`make ci-local` выполняет сборку, локальный scraping и проверку с последующей
-очисткой. Эта команда, как и clean, останавливает работающий worker.
-
-## Проверка перед защитой
-
-```sh
-make provision
-make provision
-make plan
-make deploy
-make run
-make logs
-make verify
-make ci
-make destroy
-make destroy
-```
-
-Во втором provision и в plan ожидается отсутствие изменений. В run и verify —
-непустой JSON в S3 и нулевые счётчики сообщений, включая in-flight; в logs —
-подтверждение `S3 write confirmed, SQS message deleted` для того же taskId.
-Пустой ответ ReceiveMessage сам по себе не доказывает удаления сообщения.
-Все операции сдачи выполняются через Makefile.
-
-Разработка второй лабораторной ведётся в `feat/terraform-infra` с PR в `main`.
-До защиты PR остаётся открытым и не сливается.
-
-При первой проверке AI-агент выбрал `wget` для healthcheck по JVM Dockerfile Floci.
-В опубликованном native-образе `floci/floci:2.2.0` wget отсутствует: приложение
-запустилось, но контейнер оставался unhealthy. Ошибку обнаружили по журналу
-healthcheck, затем заменили команду на штатный `/usr/local/bin/healthcheck.sh`.
+The Docker image has two stages: npm dependencies and the browser/application.
+`make ci-local` checks this local mode and cleans its image and `out/` afterwards.
