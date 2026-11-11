@@ -9,3 +9,8 @@ node_modules/
 .terraform.tfstate.lock.info
 *.tfvars
 *.tfvars.json
+
+.lab/
+.venv/
+__pycache__/
+.ansible/

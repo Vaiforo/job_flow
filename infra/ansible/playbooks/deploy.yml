@@ -1,0 +1,6 @@
+---
+- name: Deploy Job Flow application
+  hosts: all
+  become: true
+  roles:
+    - scraper

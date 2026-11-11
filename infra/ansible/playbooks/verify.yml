@@ -1,0 +1,38 @@
+---
+- name: Verify the last Job Flow result
+  hosts: all
+  become: true
+  vars:
+    job: "{{ lookup('ansible.builtin.file', project_root + '/.lab/last-job.json') | from_json }}"
+  tasks:
+    - name: Wait for valid result and empty pending list
+      community.docker.docker_compose_v2_exec:
+        project_src: /srv/quotes-scraper
+        service: scraper
+        argv: [node, src/redis-command.js, verify, "{{ job.job_id }}", "{{ job.message_id }}"]
+      register: result_check
+      changed_when: false
+      until: result_check.rc == 0
+      retries: 180
+      delay: 2
+    - name: Read result checksum
+      ansible.builtin.stat:
+        path: "/srv/quotes-scraper/results/{{ job.job_id }}.json"
+        checksum_algorithm: sha256
+      register: result_file
+    - name: Read result through Nginx from control node
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}/results/{{ job.job_id }}.json"
+        return_content: true
+        timeout: 10
+      delegate_to: localhost
+      become: false
+      register: result_http
+    - name: Compare HTTP response with saved file
+      ansible.builtin.assert:
+        that:
+          - result_http.status == 200
+          - (result_http.content | hash('sha256')) == result_file.stat.checksum
+    - name: Show result location
+      ansible.builtin.debug:
+        msg: "http://{{ ansible_host }}/results/{{ job.job_id }}.json"

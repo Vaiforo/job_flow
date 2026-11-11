@@ -1,0 +1,8 @@
+---
+profile: production
+exclude_paths:
+  - .venv/
+  - .lab/
+  - node_modules/
+  - out/
+  - infra/.terraform/

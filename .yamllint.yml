@@ -1,0 +1,23 @@
+---
+extends: default
+rules:
+  comments:
+    min-spaces-from-content: 1
+    ignore-shebangs: true
+    require-starting-space: false
+  comments-indentation: disable
+  braces:
+    max-spaces-inside: 1
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
+  line-length: disable
+  document-start: disable
+  truthy:
+    allowed-values: ['true', 'false', 'on']
+ignore: |
+  .venv/
+  .lab/
+  node_modules/
+  out/
+  infra/.terraform/

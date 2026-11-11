@@ -1,0 +1,55 @@
+---
+- name: Verify administrator connection
+  ansible.builtin.wait_for_connection:
+    timeout: 60
+- name: Verify administrator identity
+  ansible.builtin.command: id -un
+  become: false
+  register: ssh_hardening_identity
+  changed_when: false
+- name: Confirm new SSH user
+  ansible.builtin.assert:
+    that: ssh_hardening_identity.stdout == 'admin'
+- name: Restrict SSH authentication
+  ansible.builtin.copy:
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PubkeyAuthentication yes
+      AllowUsers admin
+    dest: /etc/ssh/sshd_config.d/00-job-flow.conf
+    mode: '0644'
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Reload SSH
+- name: Remove temporary user's authorized keys
+  ansible.builtin.file:
+    path: /home/ubuntu/.ssh/authorized_keys
+    state: absent
+- name: Remove temporary sudo access
+  ansible.builtin.file:
+    path: /etc/sudoers.d/90-cloud-init-users
+    state: absent
+- name: Lock temporary account
+  ansible.builtin.user:
+    name: ubuntu
+    password_lock: true
+    shell: /usr/sbin/nologin
+- name: Apply SSH changes before checking a fresh connection
+  ansible.builtin.meta: flush_handlers
+- name: Close the existing administrator connection
+  ansible.builtin.meta: reset_connection
+- name: Verify hardened administrator access
+  ansible.builtin.wait_for_connection:
+    timeout: 60
+- name: Validate effective SSH configuration
+  ansible.builtin.command: /usr/sbin/sshd -T
+  register: ssh_hardening_effective
+  changed_when: false
+- name: Check authentication restrictions
+  ansible.builtin.assert:
+    that:
+      - "'permitrootlogin no' in ssh_hardening_effective.stdout_lines"
+      - "'passwordauthentication no' in ssh_hardening_effective.stdout_lines"
+      - "'kbdinteractiveauthentication no' in ssh_hardening_effective.stdout_lines"
+      - "'allowusers admin' in ssh_hardening_effective.stdout_lines"

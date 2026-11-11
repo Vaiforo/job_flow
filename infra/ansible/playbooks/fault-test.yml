@@ -1,0 +1,104 @@
+---
+- name: Check recovery after a worker crash
+  hosts: all
+  become: true
+  vars:
+    fault_job_id: >-
+      {{ lookup('ansible.builtin.pipe', 'python3 -c "import uuid; print(uuid.uuid4())"') }}
+    fault_url: https://quotes.toscrape.com/scroll
+  tasks:
+    - name: Fix the job identifier for this run
+      ansible.builtin.set_fact:
+        fault_id: "{{ fault_job_id }}"
+    - name: Run controlled crash scenario
+      block:
+        - name: Pause this job before acknowledgment
+          ansible.builtin.copy:
+            content: "{{ fault_id }}"
+            dest: /srv/quotes-scraper/control/pause
+            mode: '0644'
+        - name: Submit fault recovery job
+          community.docker.docker_compose_v2_exec:
+            project_src: /srv/quotes-scraper
+            service: scraper
+            argv: [node, src/redis-command.js, enqueue, "{{ fault_url }}", "{{ fault_id }}"]
+          changed_when: true
+        - name: Wait for the worker to reach the pause
+          ansible.builtin.slurp:
+            src: /srv/quotes-scraper/control/reached
+          register: fault_checkpoint
+          until: "fault_checkpoint.content is defined and (fault_checkpoint.content | b64decode) == fault_id"
+          retries: 90
+          delay: 2
+        - name: Read result before crash
+          ansible.builtin.stat:
+            path: "/srv/quotes-scraper/results/{{ fault_id }}.json"
+            checksum_algorithm: sha256
+          register: fault_before
+        - name: Kill worker without graceful shutdown
+          ansible.builtin.command:
+            argv: [docker, compose, -f, /srv/quotes-scraper/compose.yaml, kill, --signal, SIGKILL, scraper]
+          changed_when: true
+        - name: Confirm pending message after the crash
+          community.docker.docker_compose_v2_run:
+            project_src: /srv/quotes-scraper
+            service: scraper
+            command: node src/redis-command.js pending
+            cleanup: true
+          changed_when: false
+      always:
+        - name: Remove pause and checkpoint files
+          ansible.builtin.file:
+            path: "/srv/quotes-scraper/control/{{ item }}"
+            state: absent
+          loop: [pause, reached]
+        - name: Restart worker after the fault check
+          community.docker.docker_compose_v2:
+            project_src: /srv/quotes-scraper
+            services: [scraper]
+            state: restarted
+            wait: true
+    - name: Wait for pending message recovery
+      community.docker.docker_compose_v2_exec:
+        project_src: /srv/quotes-scraper
+        service: scraper
+        argv: [node, src/redis-command.js, verify, "{{ fault_id }}"]
+      register: fault_recovery
+      changed_when: false
+      until: fault_recovery.rc == 0
+      retries: 180
+      delay: 2
+    - name: Deliver the same job again
+      community.docker.docker_compose_v2_exec:
+        project_src: /srv/quotes-scraper
+        service: scraper
+        argv: [node, src/redis-command.js, enqueue, "{{ fault_url }}", "{{ fault_id }}"]
+      register: fault_duplicate
+      changed_when: true
+    - name: Wait until duplicate has been delivered and acknowledged
+      community.docker.docker_compose_v2_exec:
+        project_src: /srv/quotes-scraper
+        service: scraper
+        argv: [node, src/redis-command.js, verify, "{{ fault_id }}", "{{ (fault_duplicate.stdout | from_json).message_id }}"]
+      register: fault_duplicate_check
+      changed_when: false
+      until: fault_duplicate_check.rc == 0
+      retries: 180
+      delay: 2
+    - name: Read result after duplicate delivery
+      ansible.builtin.stat:
+        path: "/srv/quotes-scraper/results/{{ fault_id }}.json"
+        checksum_algorithm: sha256
+      register: fault_after
+    - name: Find files belonging to this job
+      ansible.builtin.find:
+        paths: /srv/quotes-scraper/results
+        patterns: ["{{ fault_id }}*", ".{{ fault_id }}*"]
+        hidden: true
+      register: fault_files
+    - name: Confirm result was preserved
+      ansible.builtin.assert:
+        that:
+          - fault_files.matched == 1
+          - fault_before.stat.checksum == fault_after.stat.checksum
+          - fault_before.stat.inode == fault_after.stat.inode

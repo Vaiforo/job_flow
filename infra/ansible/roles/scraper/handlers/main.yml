@@ -1,0 +1,24 @@
+---
+- name: Build application image
+  community.docker.docker_image_build:
+    name: job-flow:server
+    path: /srv/quotes-scraper
+    rebuild: always
+  listen: Build and deploy application
+- name: Deploy application
+  community.docker.docker_compose_v2:
+    project_src: /srv/quotes-scraper
+    state: present
+    wait: true
+    wait_timeout: 90
+  listen: Build and deploy application
+- name: Restart Redis
+  community.docker.docker_compose_v2:
+    project_src: /srv/quotes-scraper
+    state: restarted
+    services: [redis]
+- name: Restart Nginx
+  community.docker.docker_compose_v2:
+    project_src: /srv/quotes-scraper
+    state: restarted
+    services: [nginx]

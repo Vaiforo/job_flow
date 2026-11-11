@@ -1,0 +1,11 @@
+---
+all:
+  hosts:
+    job_flow:
+      ansible_host: 192.0.2.10
+      ansible_user: admin
+      ansible_python_interpreter: /usr/bin/python3
+  vars:
+    project_root: "{{ playbook_dir }}/../../.."
+    admin_key_file: /tmp/job-flow-example-key
+    admin_public_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBJt7y7a0h1M0a6c2Pk0iB5b6D3uNrjCW6fSgI0pPq2K example

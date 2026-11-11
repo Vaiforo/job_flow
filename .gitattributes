@@ -1,0 +1,2 @@
+# Keep scripts and configuration readable by POSIX tools on every host.
+* text=auto eol=lf

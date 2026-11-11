@@ -1,0 +1,14 @@
+#cloud-config
+users:
+  - name: ubuntu
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - BOOTSTRAP_PUBLIC_KEY
+packages:
+  - python3
+  - sudo
+ssh_pwauth: false
+disable_root: true

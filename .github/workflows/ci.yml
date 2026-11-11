@@ -1,19 +1,19 @@
 name: CI
-
 on:
   push:
-    branches: [main, feat/quotes-scrapper, feat/terraform-infra]
+    branches: [main, feat/ansible-deploy]
   pull_request:
     branches: [main]
-
 permissions:
   contents: read
-
 jobs:
-  terraform:
+  server:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Check Terraform formatting, validate, and plan
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate server configuration
         run: make ci

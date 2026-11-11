@@ -1,0 +1,25 @@
+---
+- name: Submit a scraping job
+  hosts: all
+  become: true
+  tasks:
+    - name: Add one job to Redis Streams
+      community.docker.docker_compose_v2_exec:
+        project_src: /srv/quotes-scraper
+        service: scraper
+        argv: [node, src/redis-command.js, enqueue, "{{ job_url }}"]
+      register: submitted_job
+      changed_when: true
+    - name: Save last submitted job
+      ansible.builtin.copy:
+        content: "{{ submitted_job.stdout | from_json | to_nice_json }}\n"
+        dest: /srv/quotes-scraper/last-job.json
+        mode: '0644'
+    - name: Download job information
+      ansible.builtin.fetch:
+        src: /srv/quotes-scraper/last-job.json
+        dest: "{{ project_root }}/.lab/last-job.json"
+        flat: true
+    - name: Show submitted job
+      ansible.builtin.debug:
+        msg: "{{ submitted_job.stdout | from_json }}"
