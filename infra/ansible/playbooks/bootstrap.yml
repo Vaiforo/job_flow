@@ -1,0 +1,27 @@
+---
+- name: Prepare permanent administrator
+  hosts: all
+  become: true
+  roles:
+    - bootstrap
+- name: Switch to administrator and secure SSH
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    ansible_user: admin
+    ansible_ssh_private_key_file: "{{ admin_key_file }}"
+  pre_tasks:
+    - name: Open a new administrator connection
+      ansible.builtin.meta: reset_connection
+  tasks:
+    - name: Verify fresh administrator SSH connection
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+    - name: Verify administrator sudo
+      ansible.builtin.command: id -u
+      changed_when: false
+      register: bootstrap_sudo
+    - name: Confirm administrator can become root
+      ansible.builtin.assert:
+        that: bootstrap_sudo.stdout == '0'

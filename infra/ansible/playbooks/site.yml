@@ -1,0 +1,13 @@
+---
+- name: Prepare secure administrator access
+  ansible.builtin.import_playbook: bootstrap.yml
+- name: Configure Job Flow server
+  hosts: all
+  become: true
+  vars:
+    ansible_user: admin
+    ansible_ssh_private_key_file: "{{ admin_key_file }}"
+  roles:
+    - ssh_hardening
+    - docker_engine
+    - scraper

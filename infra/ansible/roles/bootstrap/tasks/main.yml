@@ -1,0 +1,29 @@
+---
+- name: Create permanent administrator
+  ansible.builtin.user:
+    name: admin
+    shell: /bin/bash
+    create_home: true
+    password_lock: true
+    groups: sudo
+    append: false
+- name: Create administrator SSH directory
+  ansible.builtin.file:
+    path: /home/admin/.ssh
+    state: directory
+    owner: admin
+    group: admin
+    mode: '0700'
+- name: Install administrator public key
+  ansible.builtin.copy:
+    content: "{{ admin_public_key }}\n"
+    dest: /home/admin/.ssh/authorized_keys
+    owner: admin
+    group: admin
+    mode: '0600'
+- name: Allow administrator to use sudo for automation
+  ansible.builtin.copy:
+    content: "admin ALL=(ALL) NOPASSWD:ALL\n"
+    dest: /etc/sudoers.d/job-flow-admin
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s

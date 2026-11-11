@@ -1,0 +1,47 @@
+name: job-flow-server
+services:
+  redis:
+    image: redis:7.4.6-alpine
+    command: [redis-server, /usr/local/etc/redis/redis.conf]
+    volumes:
+      - redis-data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  scraper:
+    image: job-flow:server
+    command: [node, src/redis-worker.js]
+    init: true
+    user: "1000:1000"
+    shm_size: 1gb
+    stop_grace_period: 130s
+    environment:
+      REDIS_URL: redis://redis:6379
+      RESULTS_DIR: /results
+      CONTROL_DIR: /control
+    volumes:
+      - /srv/quotes-scraper/results:/results
+      - /srv/quotes-scraper/control:/control
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, node, -e, "require('node:fs').accessSync('/tmp/redis-worker-ready')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  nginx:
+    image: nginx:1.28.0-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /srv/quotes-scraper/results:/usr/share/nginx/html/results:ro
+    restart: unless-stopped
+volumes:
+  redis-data:
